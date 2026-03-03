@@ -44,7 +44,10 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
 
   useEffect(() => {
     const connectWebSocket = () => {
-      const websocket = new WebSocket('ws://localhost:8000/ws');
+      // Use the same host/protocol as the page so the Vite proxy (dev) and
+      // any reverse proxy (prod) can route /ws without hardcoding localhost.
+      const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+      const websocket = new WebSocket(`${wsProtocol}://${window.location.host}/ws`);
 
       websocket.onopen = () => {
         setIsConnected(true);
