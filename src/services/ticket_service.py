@@ -7,6 +7,8 @@ import asyncio
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 
+from sqlalchemy import func
+
 logger = logging.getLogger(__name__)
 
 from src.core.database import (
@@ -1010,17 +1012,22 @@ class TicketService:
 
     @staticmethod
     async def get_tickets_by_workflow(
-        workflow_id: str, filters: Optional[Dict[str, Any]] = None
-    ) -> List[Dict[str, Any]]:
+        workflow_id: str,
+        filters: Optional[Dict[str, Any]] = None,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
         """
-        Get all tickets for a workflow with optional filtering.
+        Get tickets for a workflow with optional filtering and pagination.
 
         Args:
             workflow_id: ID of the workflow
             filters: Optional filters (status, priority, assigned_agent_id, etc.)
+            limit: Maximum number of tickets to return
+            offset: Number of tickets to skip
 
         Returns:
-            List of ticket dictionaries
+            Dict with keys: "tickets" (list), "total" (int), "has_more" (bool)
         """
         filters = filters or {}
 
@@ -1039,9 +1046,34 @@ class TicketService:
             if "is_resolved" in filters:
                 query = query.filter(Ticket.is_resolved == filters["is_resolved"])
 
-            tickets = query.order_by(Ticket.created_at.desc()).all()
+            total = query.count()
 
-            return [
+            tickets = (
+                query.order_by(Ticket.created_at.desc())
+                .offset(offset)
+                .limit(limit)
+                .all()
+            )
+
+            # Fetch comment and commit counts for the returned tickets in two queries
+            ticket_ids = [t.id for t in tickets]
+            comment_counts: Dict[str, int] = {}
+            commit_counts: Dict[str, int] = {}
+            if ticket_ids:
+                comment_counts = dict(
+                    db.query(TicketComment.ticket_id, func.count(TicketComment.id))
+                    .filter(TicketComment.ticket_id.in_(ticket_ids))
+                    .group_by(TicketComment.ticket_id)
+                    .all()
+                )
+                commit_counts = dict(
+                    db.query(TicketCommit.ticket_id, func.count(TicketCommit.id))
+                    .filter(TicketCommit.ticket_id.in_(ticket_ids))
+                    .group_by(TicketCommit.ticket_id)
+                    .all()
+                )
+
+            ticket_list = [
                 {
                     "id": t.id,
                     "workflow_id": t.workflow_id,
@@ -1059,8 +1091,8 @@ class TicketService:
                     "started_at": t.started_at.isoformat() + "Z" if t.started_at else None,
                     "completed_at": t.completed_at.isoformat() + "Z" if t.completed_at else None,
                     "tags": t.tags or [],
-                    "comment_count": 0,  # TODO: Query actual count
-                    "commit_count": 0,  # TODO: Query actual count
+                    "comment_count": comment_counts.get(t.id, 0),
+                    "commit_count": commit_counts.get(t.id, 0),
                     "is_blocked": bool(
                         t.blocked_by_ticket_ids and len(t.blocked_by_ticket_ids) > 0
                     ),
@@ -1069,6 +1101,12 @@ class TicketService:
                 }
                 for t in tickets
             ]
+
+            return {
+                "tickets": ticket_list,
+                "total": total,
+                "has_more": offset + len(tickets) < total,
+            }
 
     @staticmethod
     async def get_tickets_by_status(workflow_id: str, status: str) -> List[Dict[str, Any]]:
@@ -1082,7 +1120,8 @@ class TicketService:
         Returns:
             List of ticket dictionaries
         """
-        return await TicketService.get_tickets_by_workflow(workflow_id, filters={"status": status})
+        result = await TicketService.get_tickets_by_workflow(workflow_id, filters={"status": status})
+        return result["tickets"]
 
     @staticmethod
     async def assign_ticket(ticket_id: str, agent_id: str) -> Dict[str, Any]:

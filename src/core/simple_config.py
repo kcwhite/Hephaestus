@@ -1,6 +1,8 @@
 """Simplified configuration for Hephaestus."""
 
 import os
+import shutil
+import subprocess
 import yaml
 from pathlib import Path
 from typing import Optional, Dict, Any
@@ -297,12 +299,94 @@ class Config:
             return self.anthropic_api_key
         return None
 
-    def validate(self):
-        """Validate configuration."""
+    def validate(self, skip_service_checks: bool = False):
+        """Validate configuration.
+
+        Args:
+            skip_service_checks: If True, skip network/runtime checks (useful in tests).
+
+        Raises:
+            ValueError: With an actionable error message describing how to fix the problem.
+        """
+        errors = []
+
+        # --- API key checks ---
         if self.llm_provider == "openai" and not self.openai_api_key:
-            raise ValueError("OPENAI_API_KEY is required when using OpenAI provider")
+            errors.append(
+                "OPENAI_API_KEY is required when using OpenAI provider.\n"
+                "  Fix: add OPENAI_API_KEY=sk-... to your .env file"
+            )
         if self.llm_provider == "anthropic" and not self.anthropic_api_key:
-            raise ValueError("ANTHROPIC_API_KEY is required when using Anthropic provider")
+            errors.append(
+                "ANTHROPIC_API_KEY is required when using Anthropic provider.\n"
+                "  Fix: add ANTHROPIC_API_KEY=sk-ant-... to your .env file"
+            )
+
+        # Embeddings always use OpenAI regardless of LLM provider
+        if not self.openai_api_key:
+            errors.append(
+                "OPENAI_API_KEY is required for embeddings (text-embedding-3-large).\n"
+                "  Fix: add OPENAI_API_KEY=sk-... to your .env file"
+            )
+
+        if skip_service_checks:
+            if errors:
+                raise ValueError("\n\n".join(errors))
+            return True
+
+        # --- Path checks ---
+        repo_path = Path(self.main_repo_path)
+        if not repo_path.exists():
+            errors.append(
+                f"main_repo_path '{repo_path}' does not exist.\n"
+                f"  Fix: set git.main_repo_path in hephaestus_config.yaml to your project directory"
+            )
+        elif not (repo_path / ".git").exists():
+            # Also accept git worktrees which have a .git file (not directory)
+            git_check = subprocess.run(
+                ["git", "-C", str(repo_path), "rev-parse", "--git-dir"],
+                capture_output=True,
+            )
+            if git_check.returncode != 0:
+                errors.append(
+                    f"'{repo_path}' is not a git repository.\n"
+                    f"  Fix: run 'git init {repo_path}' or point git.main_repo_path at an existing repo"
+                )
+
+        worktree_base = Path(self.worktree_base_path)
+        try:
+            worktree_base.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            errors.append(
+                f"Cannot create worktree_base '{worktree_base}': {exc}.\n"
+                f"  Fix: set paths.worktree_base in hephaestus_config.yaml to a writable path"
+            )
+
+        # --- Runtime dependency checks ---
+        if shutil.which("tmux") is None:
+            errors.append(
+                "tmux is not installed but is required to spawn agents.\n"
+                "  Fix: install tmux — 'apt install tmux' (Linux) or 'brew install tmux' (macOS)"
+            )
+
+        # --- Service connectivity checks ---
+        try:
+            import urllib.request
+            with urllib.request.urlopen(f"{self.qdrant_url}/health", timeout=3) as resp:
+                if resp.status != 200:
+                    raise OSError(f"HTTP {resp.status}")
+        except Exception:
+            errors.append(
+                f"Qdrant is not reachable at {self.qdrant_url}.\n"
+                f"  Fix: start Qdrant with 'docker run -p 6333:6333 qdrant/qdrant'\n"
+                f"  Or update vector_store.qdrant_url in hephaestus_config.yaml"
+            )
+
+        if errors:
+            header = f"Hephaestus pre-flight check failed ({len(errors)} issue{'s' if len(errors) > 1 else ''}):\n"
+            body = "\n\n".join(f"  [{i + 1}] {e}" for i, e in enumerate(errors))
+            raise ValueError(header + body)
+
         return True
 
     def to_env_dict(self) -> dict:

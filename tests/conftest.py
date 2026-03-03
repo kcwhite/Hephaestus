@@ -10,6 +10,31 @@ from unittest.mock import MagicMock, AsyncMock
 # Set test database environment variable before any imports
 os.environ["HEPHAESTUS_TEST_DB"] = ":memory:"
 
+# Paths/names whose tests require external services (Qdrant, OpenAI, tmux, etc.)
+_INTEGRATION_PATH_FRAGMENTS = (
+    "/integration/",
+    "/mcp_integration/",
+    "test_vector_store",
+    "test_rag_system",
+    "test_steering_openai_integration",
+    "test_worktree_integration",
+    "test_agent_output_integration",
+    "test_ticket_mcp_integration",
+    "test_monitoring_live",
+    "test_multi_workflow_e2e",
+    "e2e_ticket_test",
+    "test_diagnostic_integration",
+)
+
+
+def pytest_collection_modifyitems(items):
+    """Auto-apply the 'integration' marker to tests that need real external services."""
+    integration_mark = pytest.mark.integration
+    for item in items:
+        path = str(item.fspath)
+        if any(fragment in path for fragment in _INTEGRATION_PATH_FRAGMENTS):
+            item.add_marker(integration_mark)
+
 
 @pytest.fixture(scope="session")
 def temp_db():

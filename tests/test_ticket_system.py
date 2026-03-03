@@ -570,7 +570,8 @@ async def test_get_tickets_by_workflow(db_manager, test_workflow, test_agent, te
     )
 
     # Get all tickets
-    tickets = await TicketService.get_tickets_by_workflow(test_workflow)
+    result = await TicketService.get_tickets_by_workflow(test_workflow)
+    tickets = result["tickets"]
 
     assert len(tickets) >= 2
     ticket_ids = [t["ticket_id"] for t in tickets]

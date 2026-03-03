@@ -2974,16 +2974,17 @@ async def get_tickets_endpoint(
         result = await TicketService.get_tickets_by_workflow(
             workflow_id=workflow_id,
             filters=filters,
+            limit=limit,
+            offset=offset,
         )
 
-        # Result is a list of ticket dicts
-        tickets = [TicketDetail(**t) for t in result]
+        tickets = [TicketDetail(**t) for t in result["tickets"]]
 
         return GetTicketsResponse(
             success=True,
             tickets=tickets,
-            total_count=len(tickets),
-            has_more=False,  # TODO: Implement pagination in service
+            total_count=result["total"],
+            has_more=result["has_more"],
         )
 
     except Exception as e:

@@ -170,10 +170,11 @@ class TestTicketMCPIntegration:
         )
 
         # Test get_tickets_by_workflow
-        tickets = await TicketService.get_tickets_by_workflow(
+        result = await TicketService.get_tickets_by_workflow(
             workflow_id=test_workflow,
             filters={},
         )
+        tickets = result["tickets"]
 
         assert len(tickets) == 2
         assert tickets[0]["ticket_id"] == result2["ticket_id"]  # Should be ordered by created_at desc
